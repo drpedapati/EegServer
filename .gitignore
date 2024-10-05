@@ -1,0 +1,14 @@
+autoclean/
+.venv/
+__pycache__/
+unprocessed/
+*.rdb
+*.fif
+*.set
+*.vhdr
+*.vmrk
+*.edf
+*.edf.gz
+*.bdf
+*.bdf.gz
+

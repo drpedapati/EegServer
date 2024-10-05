@@ -1,0 +1,29 @@
+[project]
+name = "eeg_server"
+version = "0.1.0"
+description = "EEG Server"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "prefect",
+    "python-dotenv",
+    "pandas",
+    "mne",
+    "mne_bids",
+    "autoreject",
+    "rich",
+    "python-ulid",
+    "matplotlib",
+    "pyyaml",
+    "psutil",
+    'eeglabio',
+    'pylossless',
+    'mne_icalabel',
+    'pybv',
+    "pylossless @ git+https://github.com/drpedapati/pylossless.git",
+    'openneuro-py',
+    'torch',
+    # "signalfloweeg  @ file:///${PROJECT_ROOT}/src/signalfloweeg_py"
+    "signalfloweeg @ git+https://github.com/cincibrainlab/signalfloweeg_py"
+
+]

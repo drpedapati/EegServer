@@ -1,0 +1,42 @@
+{
+    "project": {
+      "path": "${PROJECT_DIR}",
+      "description": "Main project directory",
+      "temporary": false
+    },
+    "unprocessed": {
+      "path": "${UNPROCESSED_DIR}",
+      "description": "Unprocessed data directory",
+      "temporary": false
+    },
+    "raw": {
+      "path": "${PROJECT_DIR}/dataset_raw",
+      "description": "Raw dataset directory",
+      "temporary": true
+    },
+    "set": {
+      "path": "${PROJECT_DIR}/dataset_set",
+      "description": "EEGLAB .set file directory",
+      "temporary": true
+    },
+    "fif": {
+      "path": "${PROJECT_DIR}/dataset_fif",
+      "description": "MNE-Python .fif file directory",
+      "temporary": true
+    },
+    "bids": {
+      "path": "${PROJECT_DIR}/dataset_bids",
+      "description": "BIDS dataset directory",
+      "temporary": false
+    },
+    "clean": {
+      "path": "${PROJECT_DIR}/dataset_clean",
+      "description": "Clean dataset directory",
+      "temporary": false
+    },
+    "reports": {
+      "path": "${PROJECT_DIR}/reports",
+      "description": "Report directory",
+      "temporary": false
+    }
+  }
