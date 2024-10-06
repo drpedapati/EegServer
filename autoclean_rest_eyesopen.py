@@ -1,6 +1,5 @@
 # test_cleaning_pipeline.py
 
-
 import mne
 import mne_bids as mb
 import autoreject
@@ -9,6 +8,7 @@ import pylossless as ll
 from eeg_to_bids import convert_single_eeg_to_bids
 
 import pandas as pd
+import numpy as np
 from rich.console import Console
 from pathlib import Path
 
@@ -18,14 +18,18 @@ import os
 import dotenv
 
 import datetime
-from signalflow import import_egi, export_eeglab, save_fif
 from eeglabio.utils import export_mne_epochs, export_mne_raw
 
 console = Console()
 
-
 dotenv.load_dotenv()
 
+# Add debug mode flag
+DEBUG_MODE = False
+
+def debug_banner(message):
+    if DEBUG_MODE:
+        console.print(f"\n[bold yellow]{'=' * 20} DEBUG: {message} {'=' * 20}[/bold yellow]\n")
 
 def get_cleaning_rejection_policy():
     rejection_policy = ll.RejectionPolicy()
@@ -44,7 +48,6 @@ def get_cleaning_rejection_policy():
 
     return rejection_policy
 
-
 def reject_bad_segs(raw, epoch_duration=2.0, baseline=None, preload=True):
     events = mne.make_fixed_length_events(raw, duration=epoch_duration)
     epochs = mne.Epochs(
@@ -53,13 +56,11 @@ def reject_bad_segs(raw, epoch_duration=2.0, baseline=None, preload=True):
 
     return epochs
 
-
 def run_autoreject(epochs, n_jobs=1, verbose=True):
     ar = autoreject.AutoReject(random_state=11, n_jobs=n_jobs, verbose=verbose)
     ar.fit(epochs)
     epochs_ar, reject_log = ar.transform(epochs, return_log=True)
     return epochs_ar, reject_log
-
 
 def set_eog_channels(raw, eog_channels=None):
     # Set channel types for EGI 128 channel Net
@@ -70,144 +71,20 @@ def set_eog_channels(raw, eog_channels=None):
     raw.set_channel_types({ch: "eog" for ch in raw.ch_names if ch in eog_channels})
     return raw
 
-
 def set_eeg_average_reference(raw):
     return raw.set_eeg_reference("average", projection=True)
-
 
 def resample_data(raw, sfreq=250):
     return raw.resample(sfreq)
 
-
-
-
-
-
-
-def run_pipeline(raw, pipeline):
+def run_pipeline(raw, pipeline, json_file):
     pipeline.run_with_raw(raw)
     return pipeline
-
-def create_report(bids_path, output_dir):
-    """
-    Merges specific metadata files into a single JSON report.
-
-    Parameters:
-    - bids_path (BIDSPath): MNE-BIDS BIDSPath object pointing to the EEG file.
-    - output_dir (Path): Path object where the merged report will be saved.
-    """
-    try:
-        # Initialize an empty dictionary to hold all metadata
-        merged_metadata = {}
-
-        # Define the main JSON file path
-        main_json_path = bids_path.fpath.with_suffix(".json")
-
-        # List of additional metadata files with their suffixes and types
-        metadata_files = {
-            "iclabels": {"suffix": "_iclabels.tsv", "type": "tsv"},
-            "ll_config": {"suffix": "_ll_config.yaml", "type": "yaml"},
-            "ll_FlaggedChs": {"suffix": "_ll_FlaggedChs.tsv", "type": "tsv"},
-            "events": {"suffix": "_events.tsv", "type": "tsv"},
-        }
-
-        # Load the main JSON file
-        if main_json_path.exists():
-            try:
-                with open(main_json_path, "r") as f:
-                    main_json = json.load(f)
-                merged_metadata["main_json"] = main_json
-                console.print(
-                    f"[green]Loaded main JSON file: {main_json_path.name}[/green]"
-                )
-            except json.JSONDecodeError as jde:
-                console.print(
-                    f"[red]JSON decode error in file {main_json_path.name}: {jde}[/red]"
-                )
-            except Exception as e:
-                console.print(
-                    f"[red]Error loading main JSON file {main_json_path.name}: {e}[/red]"
-                )
-        else:
-            console.print(
-                f"[yellow]Main JSON file not found: {main_json_path}[/yellow]"
-            )
-
-        # Iterate through additional metadata files
-        for key, file_info in metadata_files.items():
-            file_suffix = file_info["suffix"]
-            file_type = file_info["type"]
-            metadata_path = bids_path.fpath.with_suffix("").with_suffix(file_suffix)
-            # Explanation: bids_path.fpath.with_suffix('') removes existing suffix, then adds new suffix
-
-            if metadata_path.exists():
-                if file_type == "tsv":
-                    try:
-                        df = pd.read_csv(metadata_path, sep="\t")
-                        # Convert DataFrame to dictionary
-                        if df.shape[0] > 1:
-                            data = df.to_dict(orient="records")
-                        else:
-                            data = df.to_dict(orient="records")[0]
-                        merged_metadata[key] = data
-                        console.print(
-                            f"[green]Loaded TSV file: {metadata_path.name}[/green]"
-                        )
-                    except pd.errors.ParserError as pe:
-                        console.print(
-                            f"[red]Parser error in TSV file {metadata_path.name}: {pe}[/red]"
-                        )
-                    except Exception as e:
-                        console.print(
-                            f"[red]Error loading TSV file {metadata_path.name}: {e}[/red]"
-                        )
-                elif file_type == "yaml":
-                    try:
-                        with open(metadata_path, "r") as f:
-                            yaml_data = yaml.safe_load(f)
-                        merged_metadata[key] = yaml_data
-                        console.print(
-                            f"[green]Loaded YAML file: {metadata_path.name}[/green]"
-                        )
-                    except yaml.YAMLError as ye:
-                        console.print(
-                            f"[red]YAML error in file {metadata_path.name}: {ye}[/red]"
-                        )
-                    except Exception as e:
-                        console.print(
-                            f"[red]Error loading YAML file {metadata_path.name}: {e}[/red]"
-                        )
-            else:
-                console.print(
-                    f"[yellow]{file_info['type'].upper()} file not found: {metadata_path}[/yellow]"
-                )
-
-        # Define the report filename based on the original EEG file
-        report_filename = bids_path.stem + "_merged_metadata.json"
-        report_path = Path(output_dir) / report_filename
-
-        # Ensure the output directory exists
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save the merged metadata as a single JSON file
-        try:
-            with open(report_path, "w") as f:
-                json.dump(merged_metadata, f, indent=4)
-            console.print(f"[green]Merged metadata saved to {report_path}[/green]")
-        except Exception as e:
-            console.print(
-                f"[red]Error saving merged metadata to {report_path}: {e}[/red]"
-            )
-
-    except Exception as e:
-        console.print(f"[red]Error creating report: {e}[/red]")
-    finally:
-        return
 
 def pre_pipeline_processing(raw, json_file):
     
     target_sfreq = 250
-    target_crop_duration = 180
+    target_crop_duration = 30
     target_lfreq = 0.1
     target_hfreq = None
     
@@ -283,7 +160,7 @@ def convert_unprocessed_to_fif_set(unprocessed_file, metadata_dir, eeg_system, t
 
     unprocessed_file = Path(unprocessed_file)
     fif_file = metadata_dir / f"{unprocessed_file.stem}_raw.fif"
-    json_file = fif_file.with_suffix(".json")
+    json_file = metadata_dir / f"{unprocessed_file.stem}.json"
     print(json_file)
 
     try:
@@ -297,7 +174,9 @@ def convert_unprocessed_to_fif_set(unprocessed_file, metadata_dir, eeg_system, t
             raw.save(fif_file, overwrite=True)
             console.print(f"[green]FIF file saved: {fif_file}[/green]")
             
-            export_mne_raw(raw, str(metadata_dir / (Path(unprocessed_file).stem + "_import.set")))
+            # if DEBUG_MODE:
+            #     debug_banner("Exporting raw EEG data to SET format")
+            #     export_mne_raw(raw, str(metadata_dir / (Path(unprocessed_file).stem + "_import.set")))
 
 
     except Exception as e:
@@ -313,6 +192,9 @@ def convert_unprocessed_to_fif_set(unprocessed_file, metadata_dir, eeg_system, t
                 "Montage": montage_tag,
                 "SampleRate": raw.info["sfreq"],
                 "ChannelCount": len(raw.ch_names),
+                "DurationSec": int(raw.n_times) / raw.info["sfreq"],
+                "n_samples": int(raw.n_times),
+                "n_channels": len(raw.ch_names),
             }
         }
 
@@ -341,40 +223,141 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
     if fif_file is not None:
         bids_path = save_bids(fif_file, autoclean_dir, json_file, task="rest")
         raw = mb.read_raw_bids(bids_path, verbose="ERROR", extra_params={"preload": True})
-        raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw.fif"), overwrite=True)
-        export_mne_raw(raw, str(debug_dir / (Path(unprocessed_file).stem + "_bids_raw.set")))
+        if DEBUG_MODE:
+            debug_banner("Saving raw BIDS data")
+            #raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw.fif"), overwrite=True)
+            export_mne_raw(raw, str(debug_dir / (Path(unprocessed_file).stem + "_bids_raw.set")))
 
     if raw is not None:
         raw = pre_pipeline_processing(raw, json_file)
-        raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw_preproc.fif"), overwrite=True)
-        export_mne_raw(raw, str(debug_dir / (Path(unprocessed_file).stem + "_preprocess_raw.set")))
+        if DEBUG_MODE:
+            debug_banner("Saving preprocessed raw data")
+            #raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw_preproc.fif"), overwrite=True)
+            export_mne_raw(raw, str(debug_dir / (Path(unprocessed_file).stem + "_preprocess_raw.set")))
 
-    
     if raw is not None:
         pipeline = ll.LosslessPipeline(str(config_file))
         derivatives_path = pipeline.get_derivative_path(bids_path)
         derivatives_path.suffix = "eeg"
-        pipeline = run_pipeline(raw, pipeline)
+        pipeline = run_pipeline(raw, pipeline, json_file)
         pipeline.save(derivatives_path, overwrite=True, format="BrainVision")
-        pipeline.raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw_pipeline.fif"), overwrite=True)
+        if DEBUG_MODE:
+            debug_banner("Saving pipeline processed raw data")
+            #pipeline.raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw_pipeline.fif"), overwrite=True)
+            export_mne_raw(pipeline.raw, str(debug_dir / (Path(unprocessed_file).stem + "_raw_pipeline.set")))
 
+    # Update JSON file with postcomps stage information
+    try:
+        with open(json_file, "r") as f:
+            json_data = json.load(f)
+        # Add basic information about the raw data
+        json_data["S04_POSTCOMPS"] = {
+            "raw_info": {
+                "sample_rate": pipeline.raw.info['sfreq'],
+                "duration_seconds": pipeline.raw.n_times / pipeline.raw.info['sfreq'],
+                "n_samples": int(pipeline.raw.n_times),
+                "n_channels": pipeline.raw.info['nchan'],
+                "highpass_filter": pipeline.raw.info['highpass'],
+                "lowpass_filter": pipeline.raw.info['lowpass'],
+            },
+            "bad_channels": {
+                "noisy_channels": pipeline.flags['ch']['noisy'].tolist() if isinstance(pipeline.flags['ch']['noisy'], np.ndarray) else list(pipeline.flags['ch']['noisy']),
+                "bridged_channels": pipeline.flags['ch']['bridged'].tolist() if isinstance(pipeline.flags['ch']['bridged'], np.ndarray) else list(pipeline.flags['ch']['bridged']),
+                "rank_deficient_channels": pipeline.flags['ch']['rank'].tolist() if isinstance(pipeline.flags['ch']['rank'], np.ndarray) else list(pipeline.flags['ch']['rank']),
+                "uncorrelated_channels": pipeline.flags['ch']['uncorrelated'].tolist() if isinstance(pipeline.flags['ch']['uncorrelated'], np.ndarray) else list(pipeline.flags['ch']['uncorrelated'])
+            },
+            "bad_epochs": {
+                "noisy_epochs": pipeline.flags['epoch']['noisy'].tolist() if isinstance(pipeline.flags['epoch']['noisy'], np.ndarray) else list(pipeline.flags['epoch']['noisy']),
+                "uncorrelated_epochs": pipeline.flags['epoch']['uncorrelated'].tolist() if isinstance(pipeline.flags['epoch']['uncorrelated'], np.ndarray) else list(pipeline.flags['epoch']['uncorrelated']),
+                "noisy_ICs": pipeline.flags['epoch']['noisy_ICs'].tolist() if isinstance(pipeline.flags['epoch']['noisy_ICs'], np.ndarray) else list(pipeline.flags['epoch']['noisy_ICs'])
+            },
+            "bad_ics": {
+                "brain_ICs": pipeline.ica2.labels_['brain'],
+                "muscle_ICs": pipeline.ica2.labels_['muscle'],
+                "heart_ICs": pipeline.ica2.labels_['ecg'],
+                "eye_ICs": pipeline.ica2.labels_['eog'],
+                "channel_noise_ICs": pipeline.ica2.labels_['ch_noise'],
+                "line_noise_ICs": pipeline.ica2.labels_['line_noise'],
+                "other_ICs": pipeline.ica2.labels_['other']
+            }
+        }
+        
+        # Add events section
+        annotations_list = []
+        for ann in pipeline.raw.annotations:
+            annotation_dict = {
+                "onset": float(ann['onset']),
+                "duration": float(ann['duration']),
+                "description": str(ann['description']),
+                "orig_time": ann['orig_time'].isoformat() if ann['orig_time'] else None
+            }
+            # Convert numpy int64 to regular Python int
+            for key, value in annotation_dict.items():
+                if isinstance(value, np.int64):
+                    annotation_dict[key] = int(value)
+            annotations_list.append(annotation_dict)
+        
+        json_data["S04_POSTCOMPS"]["events"] = annotations_list
+        
+        with open(json_file, "w") as f:
+            json.dump(json_data, f, indent=4)
+        console.print(f"[green]JSON file updated with postcomps information and events: {json_file}[/green]")
+    except Exception as e:
+        console.print(f"[red]Error updating JSON file with postcomps information and events: {e}[/red]")
 
     # Apply rejection policy
     pipeline.raw.load_data()
     clean_rejection_policy = get_cleaning_rejection_policy()
     cleaned_raw = clean_rejection_policy.apply(pipeline)
-    cleaned_raw.save(clean_dir / (Path(unprocessed_file).stem + "_postcomp_raw.fif"), overwrite=True)
-    cleaned_raw.save(debug_dir / (Path(unprocessed_file).stem + "_postcomp_raw.fif"), overwrite=True)
+    if DEBUG_MODE:
+        debug_banner("Saving cleaned raw data")
+        #cleaned_raw.save(debug_dir / (Path(unprocessed_file).stem + "_postcomp_raw.fif"), overwrite=True)
+        export_mne_raw(cleaned_raw, str(debug_dir / (Path(unprocessed_file).stem + "_postcomp_raw.set")))
 
     epochs = mne.make_fixed_length_epochs(cleaned_raw, duration=2)
     epochs.load_data()
     epochs_ar, reject_log = run_autoreject(epochs)
-    epochs_ar.save(clean_dir / (Path(unprocessed_file).stem + "_postcomp_epo.fif"), overwrite=True)
     epochs_ar.export(clean_dir / (Path(unprocessed_file).stem + "_postcomp_epo.set"), fmt='eeglab', overwrite=True)
-    epochs_ar.save(debug_dir / (Path(unprocessed_file).stem + "_postcomp_epo.fif"), overwrite=True)
-    # epochs_ar.export_set(debug_dir / (Path(unprocessed_file).stem + "_postcomp_epo.set"), fmt='eeglab', overwrite=True)
+    
+    ar_plot_file = str(debug_dir / (Path(unprocessed_file).stem + "_autoreject_plot.png"))
+    fig = reject_log.plot(show=False)
+    fig.savefig(ar_plot_file)
 
-    export_mne_epochs(epochs_ar, str(debug_dir / (Path(unprocessed_file).stem + "_postcomp_epo.set")))
+    try:
+        # get indices of bad epochs by counting True values
+        bad_epoch_index = np.where(reject_log.bad_epochs)[0]
+
+        # Count and calculate percentages for each label type
+        labels = reject_log.labels
+        total_elements = labels.size
+        label_counts = {
+            "good_data": int(np.sum(labels == 0)),
+            "bad_data": int(np.sum(labels == 1)),
+            "interpolated": int(np.sum(labels == 2))
+        }
+        label_percentages = {
+            label: float(count / total_elements * 100)
+            for label, count in label_counts.items()
+        }
+
+        # Add autoreject log to json
+        reject_log_dict = {
+            'ar_bad_epochs': bad_epoch_index.tolist(),
+            'label_counts': label_counts,
+            'label_percentages': label_percentages
+        }
+        # with autoreject log
+        json_data["S04_POSTCOMPS"]["autoreject_log"] = reject_log_dict
+        
+        # Write updated json_data back to file
+        with open(json_file, "w") as f:
+            json.dump(json_data, f, indent=4)
+    except Exception as e:
+        console.print(f"[red]Error adding autoreject log to JSON: {e}[/red]")
+    if DEBUG_MODE:
+        debug_banner("Saving autoreject epochs")
+        #epochs_ar.save(debug_dir / (Path(unprocessed_file).stem + "_postcomp_epo.fif"), overwrite=True)
+        export_mne_epochs(epochs_ar, str(debug_dir / (Path(unprocessed_file).stem + "_postcomp_epo.set")))
 
     return
 
@@ -403,9 +386,9 @@ def main():
     unprocessed_file = "/Users/ernie/Documents/GitHub/EegServer/unprocessed/0354_rest.raw"
     eeg_system = "EGI128_RAW"
     task = "rest_eyesopen"
-    config_file = Path("lossless_config_imax.yaml")
+    config_file = Path("lossless_config_rest_eyesopen.yaml")
 
     entrypoint(unprocessed_file, eeg_system, task, config_file)
-    
+
 if __name__ == "__main__":
     main()
