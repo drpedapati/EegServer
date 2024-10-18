@@ -54,7 +54,15 @@ def analysis_rest_eyesopen(file_path):
     print("=" * 50)
     print("FINISHED ANALYSIS REST EYES OPEN TASK")
     print("=" * 50)
-
+    
+def autoclean_chirp_default(file_path):
+    """
+    Task to process a new file by creating its sidecar JSON.
+    """
+    print("=" * 50)
+    print("STARTING AUTOCLEAN CHIRP DEFAULT TASK")
+    print("=" * 50)
+    
 def clean_up_raw(file_path):
     """
     Task to process a new file by creating its sidecar JSON.

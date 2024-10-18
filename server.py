@@ -1,17 +1,3 @@
-# /// script
-# requires-python = ">=3.8"
-# dependencies = [
-#     "python-dotenv",
-#     "watchdog",
-#     "rq",
-#     "redis",
-#     "mne",
-#     "eeglabio",
-# ]
-# ///
-
-
-# master.py
 import os
 import time
 import multiprocessing
@@ -20,10 +6,11 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from rq import Worker, Queue, Connection
 from redis import Redis
-from tasks import sidecar_q, process_q, process_new_file, process_sidecar
-import importlib
-from tasks import clean_up_raw
+from tasks import autoclean_rest_eyesopen, analysis_rest_eyesopen, clean_up_raw, autoclean_chirp_default
 from pathlib import Path
+
+# Load environment variables
+load_dotenv()
 
 def start_rq_worker(queue_names, redis_host, redis_port, redis_db):
     """
@@ -39,87 +26,76 @@ class ConfigurableFileHandler(FileSystemEventHandler):
     """
     Watchdog event handler that enqueues tasks based on file extensions.
     """
-    def __init__(self, extension, queue_name, task_function_name):
+    def __init__(self, extension_to_task):
         super().__init__()
-        self.extension = extension
-        self.queue_name = queue_name
-        self.task_function_name = task_function_name
-        # Set up RQ queue
+        # Mapping from file extensions to (queue_name, task_function)
+        self.extension_to_task = extension_to_task
+        # Set up RQ connections
         redis_host = os.getenv('REDIS_HOST', 'localhost')
         redis_port = int(os.getenv('REDIS_PORT', 6379))
         redis_db = int(os.getenv('REDIS_DB', 0))
         self.redis_conn = Redis(host=redis_host, port=redis_port, db=redis_db)
-        self.queue = Queue(self.queue_name, connection=self.redis_conn)
-        # Import the task function
-        # Assuming tasks.py is in the same directory
-        tasks_module = importlib.import_module('tasks')
-        self.task_function = getattr(tasks_module, self.task_function_name)
+        # Prepare queues
+        self.queues = {}
+        for queue_name in set(q for q, _ in extension_to_task.values()):
+            self.queues[queue_name] = Queue(queue_name, connection=self.redis_conn)
     
     def on_created(self, event):
         if event.is_directory:
             return
-        if event.src_path.endswith(f'.{self.extension}'):
+        _, ext = os.path.splitext(event.src_path)
+        ext = ext.lstrip('.')
+        if ext in self.extension_to_task:
+            queue_name, task_function = self.extension_to_task[ext]
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Detected new file: {event.src_path}")
-            # Enqueue the corresponding task
-            self.queue.enqueue(self.task_function, event.src_path)
-            
+            self.queues[queue_name].enqueue(task_function, event.src_path)
+    
     def on_deleted(self, event):
         if event.is_directory:
             return
-        if event.src_path.endswith(f'.{self.extension}'):
+        _, ext = os.path.splitext(event.src_path)
+        ext = ext.lstrip('.')
+        if ext in self.extension_to_task:
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Detected deleted file: {event.src_path}")
-            # Enqueue the corresponding task
-            self.queue.enqueue(clean_up_raw, event.src_path)
-
-def start_watchdog_monitor(path, extension, queue_name, task_function_name):
-    """
-    Starts a Watchdog observer for a specific path and extension.
-    """
-    event_handler = ConfigurableFileHandler(extension, queue_name, task_function_name)
-    observer = Observer()
-    observer.schedule(event_handler, path, recursive=False)
-    observer.start()
-    print(f"Started Watchdog monitor for .{extension} files in {path}")
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
+            self.queues['preprocessing'].enqueue(clean_up_raw, event.src_path)
 
 def main():
+    
+
+    # Load environment variables
     REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
     REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
     REDIS_DB = int(os.getenv('REDIS_DB', 0))
-    
-    # Load environment variables
-    load_dotenv()
     AUTOCLEAN_DIR = os.getenv('AUTOCLEAN_DIR')
     
-
-
-    # Define watch configurations for new raw/set files
-    new_file_watch_configs = [
-        {"path": os.path.join(AUTOCLEAN_DIR, "resting_eyesopen", "watch"), 
-         "extension": "raw", 
-         "queue_name": "preprocessing", 
-         "task_function_name": "autoclean_resting_eyesopen"},
+    # Define watch configurations
+    watch_configs = [
+        {
+            "path": os.path.join(AUTOCLEAN_DIR, "rest_eyesopen", "watch"),
+            "extension_to_task": {
+                "raw": ("preprocessing", autoclean_rest_eyesopen),
+            }
+        },
+        {
+            "path": os.path.join(AUTOCLEAN_DIR, "chirp_default", "watch"),
+            "extension_to_task": {
+                "raw": ("preprocessing", autoclean_chirp_default),
+            }
+        },
+        {
+            "path": os.path.join(AUTOCLEAN_DIR, "rest_eyesopen", "postcomps"),
+            "extension_to_task": {
+                "ready": ("analysis", analysis_rest_eyesopen),
+            }
+        },
     ]
-
-    # Define watch configurations for sidecar JSON files
-    postcomp_watch_configs = [
-        {"path": os.path.join(AUTOCLEAN_DIR, "resting_eyesopen", "postcomp"), 
-         "extension": "set", 
-         "queue_name": "analysis", 
-         "task_function_name": "analysis_resting_eyesopen"},
-    ]
-
-    # Combine all watch configurations
-    all_watch_configs = new_file_watch_configs + postcomp_watch_configs
-
+    
     # Ensure all watch directories exist
-    for config in all_watch_configs:
+    for config in watch_configs:
         os.makedirs(config['path'], exist_ok=True)
+    
+        # Set the start method for multiprocessing
+    multiprocessing.set_start_method("spawn")  # Alternatives: "spawn" or "forkserver"
 
     # Start RQ worker in a separate process
     worker_process = multiprocessing.Process(
@@ -129,38 +105,64 @@ def main():
     )
     worker_process.start()
     print("RQ worker started and listening to 'preprocessing' and 'analysis' queues.")
+    
+    # Start Watchdog observer
+    observer = Observer()
+    for config in watch_configs:
+        event_handler = ConfigurableFileHandler(config['extension_to_task'])
+        observer.schedule(event_handler, config['path'], recursive=False)
+        print(f"Started Watchdog monitor for path {config['path']}")
 
-    # Start Watchdog monitors in separate processes
-    watchdog_processes = []
-    for config in all_watch_configs:
-        p = multiprocessing.Process(
-            target=start_watchdog_monitor, 
-            args=(
-                config['path'], 
-                config['extension'], 
-                config['queue_name'], 
-                config['task_function_name']
-            ),
-            daemon=True
-        )
-        p.start()
-        watchdog_processes.append(p)
-        print(f"Started Watchdog monitor for .{config['extension']} files in {config['path']}")
-
+    observer.start()
     print("All Watchdog monitors started.")
     print("System is running. Press Ctrl+C to exit.")
-
+    
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down system...")
-        for p in watchdog_processes:
-            p.terminate()
-            p.join()
+        observer.stop()
+        observer.join()
         worker_process.terminate()
         worker_process.join()
         print("System shutdown complete.")
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.status import Status
+from rich.table import Table
+
+def display_environment(console):
+    env_vars = {
+        "AUTOCLEAN_DIR": os.getenv('AUTOCLEAN_DIR'),
+        "UNPROCESSED_DIR": os.getenv('UNPROCESSED_DIR'),
+        "REDIS_HOST": os.getenv('REDIS_HOST'),
+        "REDIS_PORT": os.getenv('REDIS_PORT'),
+        "REDIS_DB": os.getenv('REDIS_DB'),
+    }
+
+    table = Table(title="Environment Variables", show_header=True, header_style="bold magenta")
+    table.add_column("Variable", style="dim", width=20)
+    table.add_column("Value", style="bold cyan")
+
+    for key, value in env_vars.items():
+        table.add_row(key, value)
+
+    console.print(table)
+
 if __name__ == "__main__":
-    main()
+    console = Console()
+
+    console.print(Panel.fit("[bold green]Starting Autoclean REST Eyes Open Service[/bold green]", 
+                            title="Service Status", border_style="green"))
+
+    display_environment(console)
+
+    with console.status("[bold green]Running main process...", spinner="dots") as status:
+        try:
+            main()
+            console.print("[bold green]Main process completed successfully![/bold green]")
+        except Exception as e:
+            console.print(f"[bold red]An error occurred: {e}[/bold red]")
+            raise

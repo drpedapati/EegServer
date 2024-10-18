@@ -1,6 +1,21 @@
-version: '3.8'
-
 services:
+  # autoclean:
+  #   image: autoclean
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - .:/app
+  #     - /Users/ernie/Documents/GitHub/EegServer/unprocessed:/app/unprocessed
+  #     - /Users/ernie/Documents/GitHub/EegServer/autoclean:/app/autoclean
+  #   environment:
+  #     - REDIS_HOST=redis
+  #     - REDIS_PORT=6379
+  #     - REDIS_DB=0
+  #     - AUTOCLEAN_DIR=/app/autoclean
+  #     - UNPROCESSED_DIR=/app/unprocessed
+  #   depends_on:
+  #     - redis
+
   redis:
     image: redis:latest
     container_name: eeg_redis
@@ -20,6 +35,19 @@ services:
       - RQ_DASHBOARD_REDIS_URL=redis://redis:6379
     depends_on:
       - redis
+
+  # matlab:
+  #   image: mathworks/matlab-deep-learning:r2024b
+  #   environment:
+  #     - MLM_WEB_LICENSE=true
+  #     - MLM_WEB_USER=pedapaet@ucmail.uc.edu
+  #     - MLM_WEB_PASS=ygFH,28fzUCJ?Ee
+  #   command: -batch rand
+  #   volumes:
+  #     - ./matlab_scripts:/matlab_scripts
+  #   depends_on:
+  #     - autoclean
+
 
 volumes:
   redis_data:
