@@ -24,7 +24,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import track
 import shutil
-import re
 from mne.io.constants import FIFF
 
 console = Console()
@@ -202,6 +201,8 @@ def convert_single_eeg_to_bids(
     participant_id=None,
     line_freq=60.0,
     overwrite=False,
+    events=None,
+    event_id=None,
     study_name="EEG Study"):
     """
     Converts a single EEG data file into BIDS format with default/dummy metadata.
@@ -274,8 +275,8 @@ def convert_single_eeg_to_bids(
         "overwrite": overwrite,
         "verbose": False,
         "format": "EEGLAB",
-        "events": None,
-        "event_id": None,
+        "events": events,
+        "event_id": event_id,
     }
 
     # Write BIDS data
@@ -397,6 +398,8 @@ def process_metadata_row(row, bids_root, line_freq=60):
         "overwrite": True,
         "verbose": False,
         "format": "BrainVision",
+        "events": None,
+        "event_id": None,
     }
 
     # Write BIDS data

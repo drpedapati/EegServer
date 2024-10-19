@@ -80,7 +80,7 @@ def set_eog_channels(raw, eog_channels=None):
 def set_eeg_average_reference(raw):
     try:
         raw.set_eeg_reference("average", projection=True)
-        raw.apply_proj()
+        #raw.apply_proj()
         console.print("[green]Average reference applied and projections updated[/green]")
     except Exception as e:
         console.print(f"[red]Error applying average reference: {e}[/red]")
@@ -210,9 +210,10 @@ def save_bids():
     json_file = params["json_file"]
     task = params["task"]
     events = params["events"]
-    
+    event_id = params["event_id"]
+    event_dict = params["event_dict"]
     sanitized_task = sanitize_task(task)
-    
+
     if not fif_file.exists():
         console.print(f"[red]FIF file not found: {fif_file}[/red]")
         return None
@@ -225,7 +226,8 @@ def save_bids():
             line_freq=60.0,
             overwrite=True,
             study_name=fif_file.stem,
-            events=events
+            events=events,
+            event_id=event_dict
         )
         console.print("[green]BIDS conversion successful.[/green]")
         console.print(f"BIDS data saved at: {bids_path}")
@@ -271,8 +273,31 @@ def import_unprocessed():
             
             raw = mne.io.read_raw_egi(input_fname=unprocessed_file, preload=True, events_as_annotations=True)
             
-            events = None
+            # Print STIM channels using rich
+            stim_channels = mne.pick_types(raw.info, stim=True, exclude=[])
+            stim_channel_names = [raw.ch_names[ch] for ch in stim_channels]
+            console.print("[bold]STIM channels:[/bold]", stim_channel_names)
             
+            events, event_id = update_events(raw)
+
+            params['event_id'] = {'DI64': 1}
+            target_event_id = params['event_id'] 
+            events, event_id = update_events(raw)
+            raw.set_annotations(None)
+ 
+            # Convert the event_id dictionary to use standard Python strings as keys
+            event_dict = {str(key): int(value) for key, value in event_id.items()}
+
+            # Print the resulting event dictionary
+            print("Event Dictionary:")
+            for key, value in event_dict.items():
+                print(f"{key}: {value}")
+            
+
+            params["event_dict"] = event_dict
+            params["event_id"] = target_event_id
+            params["events"] = events
+ 
             montage = mne.channels.make_standard_montage(montage_tag)
             montage.ch_names[128] = "E129"
             raw.set_montage(montage, match_case=False)
@@ -362,12 +387,19 @@ def directories_banner(bids_dir, metadata_dir, clean_dir, debug_dir):
 
 params = {}
     # -- EPOCH DATA -- #
+
+def update_events(raw):
+    global params
+    event_id = params['event_id']
+    events, event_id = mne.events_from_annotations(raw, event_id=event_id)
+    return events, event_id
+
 def epoch_data(raw):
     global params
-        
-    event_id = params['event_id']   
-    events, event_id = mne.events_from_annotations(raw, event_id=event_id)
-    epochs = mne.Epochs(raw, events=events, event_id=event_id, tmin=-.5, tmax=2.750)
+    events, event_id = update_events(raw)
+    epochs = mne.Epochs(raw, events=events, event_id=event_id, tmin=-.5, tmax=2.7, baseline=None)
+    epochs.get_data().shape
+    epochs.drop_log
     return epochs
 
 def entrypoint(unprocessed_file, eeg_system, task, config_file):
@@ -382,10 +414,10 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
         "task": task,
         "config_file": config_file,
         "sanitized_task": sanitize_task(task),
-        "lowpass_filter": 0.1,
+        "lowpass_filter": .1,
         "resample_data": 250,
         "eog_channels": [f"E{ch}" for ch in sorted([1, 32, 8, 14, 17, 21, 25, 125, 126, 127, 128])],
-        "trim_data": 60,
+        "trim_data": None,
         "asr_cutoff": 20,
         "bids_path": None,
         "json_file": None,
@@ -437,12 +469,12 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
     pipeline.raw.load_data()
     clean_rejection_policy = get_cleaning_rejection_policy()
     cleaned_raw = clean_rejection_policy.apply(pipeline)
-    
     epochs = epoch_data(cleaned_raw)
+    epochs.export(params["clean_dir"] / (Path(unprocessed_file).stem + "_postcomp_epo.set"), fmt='eeglab', overwrite=True)
     
     epochs.load_data()
     epochs_ar, reject_log = run_autoreject(epochs)
-    epochs_ar.export(params["clean_dir"] / (Path(unprocessed_file).stem + "_postcomp_epo.set"), fmt='eeglab', overwrite=True)
+    epochs_ar.export(params["clean_dir"] / (Path(unprocessed_file).stem + "_postcomp_ar_epo.set"), fmt='eeglab', overwrite=True)
     
     ar_plot_file = str(params["debug_dir"] / (Path(unprocessed_file).stem + "_autoreject_plot.png"))
     fig = reject_log.plot(show=False)

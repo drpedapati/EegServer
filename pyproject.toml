@@ -26,6 +26,7 @@ dependencies = [
     "pylossless @ git+https://github.com/drpedapati/pylossless.git",
     'openneuro-py',
     'torch',
+    'asrpy',
     # "signalfloweeg  @ file:///${PROJECT_ROOT}/src/signalfloweeg_py"
     "signalfloweeg @ git+https://github.com/cincibrainlab/signalfloweeg_py"
 

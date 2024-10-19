@@ -96,6 +96,20 @@ wheels = [
 ]
 
 [[package]]
+name = "asrpy"
+version = "0.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mne" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/85/0c/943d415dd19ee223cc457ae9dc20e053244f01361aeca4fcc5aae66ffe52/asrpy-0.0.3.tar.gz", hash = "sha256:58c2b381decde22c47e8b9ca79f2e7ad411fd7000f0c572d6ddaa450d93bbacd", size = 18812 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/9a/c0c2fd974fdfc7f777f4a7137751a0b0e3f257d5e5dfae500ead594ac26c/asrpy-0.0.3-py3-none-any.whl", hash = "sha256:56d1b70ae6462b1d224116770a765cc8d1b1bcdad84b51c7a7622d29ee6941e2", size = 18981 },
+]
+
+[[package]]
 name = "async-timeout"
 version = "4.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -545,6 +559,7 @@ name = "eeg-server"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "asrpy" },
     { name = "autoreject" },
     { name = "eeglabio" },
     { name = "matplotlib" },
@@ -570,6 +585,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "asrpy" },
     { name = "autoreject" },
     { name = "eeglabio" },
     { name = "matplotlib" },
