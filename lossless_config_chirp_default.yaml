@@ -5,7 +5,7 @@ bridged_channels:
 epoching:
     epochs_args:
         baseline: null
-        tmax: 2
+        tmax: 1
         tmin: 0
     overlap: 0
 filtering:

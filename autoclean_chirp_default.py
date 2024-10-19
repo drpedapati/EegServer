@@ -272,19 +272,21 @@ def import_unprocessed():
             montage_tag = "GSN-HydroCel-129"
             
             raw = mne.io.read_raw_egi(input_fname=unprocessed_file, preload=True, events_as_annotations=True)
-            
-            # Print STIM channels using rich
-            stim_channels = mne.pick_types(raw.info, stim=True, exclude=[])
-            stim_channel_names = [raw.ch_names[ch] for ch in stim_channels]
-            console.print("[bold]STIM channels:[/bold]", stim_channel_names)
-            
             events, event_id = update_events(raw)
-
+            
             params['event_id'] = {'DI64': 1}
             target_event_id = params['event_id'] 
-            events, event_id = update_events(raw)
+            rev_target_event_id = dict(map(reversed, target_event_id.items()))
+
+            annotations = mne.annotations_from_events(events, raw.info['sfreq'], event_desc=rev_target_event_id)
             raw.set_annotations(None)
- 
+            raw.set_annotations(annotations)
+            
+            # Print STIM channels using rich
+            #stim_channels = mne.pick_types(raw.info, stim=True, exclude=[])
+            #stim_channel_names = [raw.ch_names[ch] for ch in stim_channels]
+            #console.print("[bold]STIM channels:[/bold]", stim_channel_names)
+            
             # Convert the event_id dictionary to use standard Python strings as keys
             event_dict = {str(key): int(value) for key, value in event_id.items()}
 
@@ -295,7 +297,7 @@ def import_unprocessed():
             
 
             params["event_dict"] = event_dict
-            params["event_id"] = target_event_id
+            #params["event_id"] = target_event_id
             params["events"] = events
  
             montage = mne.channels.make_standard_montage(montage_tag)
@@ -390,14 +392,45 @@ params = {}
 
 def update_events(raw):
     global params
-    event_id = params['event_id']
-    events, event_id = mne.events_from_annotations(raw, event_id=event_id)
+    #event_id = params['event_id']
+    events, event_id = mne.events_from_annotations(raw, event_id=params['event_id'])
     return events, event_id
 
 def epoch_data(raw):
     global params
     events, event_id = update_events(raw)
-    epochs = mne.Epochs(raw, events=events, event_id=event_id, tmin=-.5, tmax=2.7, baseline=None)
+    import numpy as np
+    
+    def modify_filename_ending(file_path, old_ending, new_ending):
+        path = Path(file_path)
+        new_name = path.name.replace(old_ending, new_ending)
+        return path.with_name(new_name)
+    
+    clean_raw_set = modify_filename_ending(params['set_file'], '_import.set', '_clean_raw.set')
+
+    print(f"Original file: {params['set_file']}")
+    print(f"Modified file: {clean_raw_set}")
+    
+    export_mne_raw(raw, str(clean_raw_set))
+
+    # Assuming you have your annotations object
+    annotations = raw.annotations
+
+    # Get unique descriptions
+    unique_descriptions = np.unique(annotations.description)
+    
+    # Create a new event_dict
+    event_dict = {str(desc): i+1 for i, desc in enumerate(unique_descriptions)}
+
+    print("New event_dict:")
+    for key, value in event_dict.items():
+        print(f"{key}: {value}")
+
+    # If you need to create events from these annotations
+    events, event_id = mne.events_from_annotations(raw, event_id=event_dict)
+    
+    #breakpoint()
+    epochs = mne.Epochs(raw, events=events, event_id={'DI64': event_id['DI64']}, tmin=-.5, tmax=2.7, baseline=None, reject_by_annotation=True, event_repeated='merge')    
     epochs.get_data().shape
     epochs.drop_log
     return epochs
@@ -435,6 +468,9 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
     # -- SAVE BIDS -- #
     params["bids_path"] = save_bids()
     
+    #return
+
+#def overflow_preprocessing(raw):
     raw = mb.read_raw_bids(params["bids_path"], verbose="ERROR", extra_params={"preload": True})
     
     raw = lowpass_filter(raw, lfreq=params["lowpass_filter"])
@@ -445,7 +481,7 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
     
     raw = set_eeg_average_reference(raw)
     
-    raw = run_asr(raw, cutoff=params["asr_cutoff"])
+    # raw = run_asr(raw, cutoff=params["asr_cutoff"])
 
     # update json file with new metadata
     with open(json_file, "r") as f:
@@ -546,20 +582,24 @@ def prepare_directories(task):
     
 def main():
     
-    unprocessed_file = "/Users/ernie/Documents/GitHub/EegServer/unprocessed/0006_chirp.raw"
+    #unprocessed_file = "/Users/ernie/Documents/GitHub/EegServer/unprocessed/0006_chirp.raw"
     eeg_system = "EGI128_RAW"
     task = "chirp_default"
     config_file = Path("lossless_config_chirp_default.yaml")
 
     # Directory containing the raw files
-    unprocessed_dir = Path("/Users/ernie/Documents/GitHub/EegServer/unprocessed")
-    unprocessed_dir="/srv/RAWDATA/1_NBRT_LAB_STUDIES/Proj_SPG601/Chirp"
+    import socket
+    hostname = socket.gethostname()
+    if hostname == "Ernies-MacBook-Pro.local":
+        unprocessed_dir = Path("/Users/ernie/Documents/GitHub/EegServer/unprocessed")
+    else:
+        unprocessed_dir = Path("/srv/RAWDATA/1_NBRT_LAB_STUDIES/Proj_SPG601/Chirp")
     
     # List all .raw files in the directory
-    raw_files = [f for f in unprocessed_dir.glob("*.raw")]
+    raw_files = [f for f in unprocessed_dir.glob("*_chirp.raw")]
 
     # Loop through each raw file and process it
-    for raw_file in raw_files:
+    for raw_file in raw_files[0:1]:
         print(f"Processing file: {raw_file}")
         entrypoint(str(raw_file), eeg_system, task, config_file)
 
