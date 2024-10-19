@@ -553,7 +553,8 @@ def main():
 
     # Directory containing the raw files
     unprocessed_dir = Path("/Users/ernie/Documents/GitHub/EegServer/unprocessed")
-
+    unprocessed_dir="/srv/RAWDATA/1_NBRT_LAB_STUDIES/Proj_SPG601/Chirp"
+    
     # List all .raw files in the directory
     raw_files = [f for f in unprocessed_dir.glob("*.raw")]
 
