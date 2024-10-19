@@ -551,7 +551,23 @@ def main():
     task = "chirp_default"
     config_file = Path("lossless_config_chirp_default.yaml")
 
-    entrypoint(unprocessed_file, eeg_system, task, config_file)
+    # Directory containing the raw files
+    unprocessed_dir = Path("/Users/ernie/Documents/GitHub/EegServer/unprocessed")
+
+    # List all .raw files in the directory
+    raw_files = [f for f in unprocessed_dir.glob("*.raw")]
+
+    # Loop through each raw file and process it
+    for raw_file in raw_files:
+        print(f"Processing file: {raw_file}")
+        entrypoint(str(raw_file), eeg_system, task, config_file)
+
+    # If no raw files are found, print a message
+    if not raw_files:
+        print("No .raw files found in the unprocessed directory.")
+
+    #print("Starting autoclean for chirp_default")
+    #entrypoint(unprocessed_file, eeg_system, task, config_file)
 
 if __name__ == "__main__":
     main()

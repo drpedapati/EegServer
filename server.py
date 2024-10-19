@@ -17,7 +17,7 @@ def start_rq_worker(queue_names, redis_host, redis_port, redis_db):
     Starts an RQ worker listening to specified queues.
     """
     redis_conn = Redis(host=redis_host, port=redis_port, db=redis_db)
-    queues = [Queue(name, connection=redis_conn) for name in queue_names]
+    queues = [Queue(name, connection=redis_conn, default_timeout=3600) for name in queue_names]
     with Connection(redis_conn):
         worker = Worker(queues)
         worker.work()

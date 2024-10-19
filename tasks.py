@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import time
 from autoclean_rest_eyesopen import entrypoint as do_autoclean_rest_eyesopen
-
+from autoclean_chirp_default import entrypoint as do_autoclean_chirp_default
 # Load environment variables
 load_dotenv()
 BASE_DIR = os.getenv('AUTOCLEAN_DIR')
@@ -62,6 +62,16 @@ def autoclean_chirp_default(file_path):
     print("=" * 50)
     print("STARTING AUTOCLEAN CHIRP DEFAULT TASK")
     print("=" * 50)
+    try:
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Processing new file: {file_path}")
+        unprocessed_file = file_path
+        eeg_system = "EGI128_RAW"
+        task = "chirp_default"
+        config_file = Path("lossless_config_chirp_default.yaml")
+        do_autoclean_chirp_default(unprocessed_file, eeg_system, task, config_file)
+    except Exception as e:
+        print(f"Error processing new file {file_path}: {e}")
+        raise
     
 def clean_up_raw(file_path):
     """
