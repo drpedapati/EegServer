@@ -593,7 +593,7 @@ def main():
     if hostname == "Ernies-MacBook-Pro.local":
         unprocessed_dir = Path("/Users/ernie/Documents/GitHub/EegServer/unprocessed")
     else:
-        unprocessed_dir = Path("/srv/RAWDATA/1_NBRT_LAB_STUDIES/Proj_SPG601/Chirp")
+        unprocessed_dir = Path("/home/ernie/srv/RAWDATA/1_NBRT_LAB_STUDIES/Proj_SPG601/Chirp")
     
     # List all .raw files in the directory
     raw_files = [f for f in unprocessed_dir.glob("*_chirp.raw")]
