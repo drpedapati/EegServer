@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 from autoclean_rest_eyesopen import entrypoint as do_autoclean_rest_eyesopen
 from autoclean_chirp_default import entrypoint as do_autoclean_chirp_default
+from autoclean_assr_default import entrypoint as do_autoclean_assr_default
 # Load environment variables
 load_dotenv()
 BASE_DIR = os.getenv('AUTOCLEAN_DIR')
@@ -69,6 +70,24 @@ def autoclean_chirp_default(file_path):
         task = "chirp_default"
         config_file = Path("lossless_config_chirp_default.yaml")
         do_autoclean_chirp_default(unprocessed_file, eeg_system, task, config_file)
+    except Exception as e:
+        print(f"Error processing new file {file_path}: {e}")
+        raise
+
+def autoclean_assr_default(file_path):
+    """
+    Task to process a new file by creating its sidecar JSON.
+    """
+    print("=" * 50)
+    print("STARTING AUTOCLEAN ASSR DEFAULT TASK")
+    print("=" * 50)
+    try:
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Processing new file: {file_path}")
+        unprocessed_file = file_path
+        eeg_system = "EGI128_RAW"
+        task = "assr_default"
+        config_file = Path("lossless_config_assr_default.yaml")
+        do_autoclean_assr_default(unprocessed_file, eeg_system, task, config_file)
     except Exception as e:
         print(f"Error processing new file {file_path}: {e}")
         raise

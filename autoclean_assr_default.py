@@ -590,18 +590,19 @@ def main():
     # Directory containing the raw files
     import socket
     hostname = socket.gethostname()
-    if hostname == "Ernies-MacBook-Pro.local":
+    if hostname == "Ernies-MacBook-Pro.local" or hostname == "ew19-04419.chmccorp.cchmc.org":
+        print("Running on MacBook")
         unprocessed_dir = Path("/Users/ernie/Documents/GitHub/EegServer/unprocessed")
     else:
-        unprocessed_dir = Path("/home/ernie/srv/RAWDATA/1_NBRT_LAB_STUDIES/Proj_SPG601/Chirp")
+        unprocessed_dir = Path("/home/ernie/srv/RAWDATA/1_NBRT_LAB_STUDIES/Proj_SPG601/SSCT")
     
     # List all .raw files in the directory
-    raw_files = [f for f in unprocessed_dir.glob("*.raw") if f.name.lower().endswith("_chirp.raw")]
+    raw_files = [f for f in unprocessed_dir.glob("*.raw") if f.name.lower().endswith("_ssct.raw")]
 
     # Loop through each raw file and process it
-    for raw_file in raw_files[1:2]:
+    for raw_file in raw_files:
         print(f"Processing file: {raw_file}")
-        entrypoint(str(raw_file), eeg_system, task, config_file)
+        #entrypoint(str(raw_file), eeg_system, task, config_file)
 
     # If no raw files are found, print a message
     if not raw_files:

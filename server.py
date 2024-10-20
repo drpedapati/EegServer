@@ -83,6 +83,12 @@ def main():
             }
         },
         {
+            "path": os.path.join(AUTOCLEAN_DIR, "assr_default", "watch"),
+            "extension_to_task": {
+                "raw": ("preprocessing", autoclean_assr_default),
+            }
+        },
+        {
             "path": os.path.join(AUTOCLEAN_DIR, "rest_eyesopen", "postcomps"),
             "extension_to_task": {
                 "ready": ("analysis", analysis_rest_eyesopen),
