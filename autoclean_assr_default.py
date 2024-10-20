@@ -274,7 +274,7 @@ def import_unprocessed():
             raw = mne.io.read_raw_egi(input_fname=unprocessed_file, preload=True, events_as_annotations=True)
             events, event_id = update_events(raw)
             
-            params['event_id'] = {'DI64': 1}
+            params['event_id'] = {'DI66': 1}
             target_event_id = params['event_id'] 
             rev_target_event_id = dict(map(reversed, target_event_id.items()))
 
@@ -430,7 +430,7 @@ def epoch_data(raw):
     events, event_id = mne.events_from_annotations(raw, event_id=event_dict)
     
     #breakpoint()
-    epochs = mne.Epochs(raw, events=events, event_id={'DI64': event_id['DI64']}, tmin=-.5, tmax=2.7, baseline=None, reject_by_annotation=True, event_repeated='merge')    
+    epochs = mne.Epochs(raw, events=events, event_id={'DI66': event_id['DI66']}, tmin=-.5, tmax=2.7, baseline=None, reject_by_annotation=True, event_repeated='merge')    
     epochs.get_data().shape
     epochs.drop_log
     return epochs
@@ -454,7 +454,7 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
         "asr_cutoff": 20,
         "bids_path": None,
         "json_file": None,
-        'event_id': {'DI64': 1}
+        'event_id': {'DI66': 1}
     }
     
     params["bids_dir"], params["metadata_dir"], params["clean_dir"], params["debug_dir"] = prepare_directories(params["task"])
@@ -584,8 +584,8 @@ def main():
     
     #unprocessed_file = "/Users/ernie/Documents/GitHub/EegServer/unprocessed/0006_chirp.raw"
     eeg_system = "EGI128_RAW"
-    task = "chirp_default"
-    config_file = Path("lossless_config_chirp_default.yaml")
+    task = "assr_default"
+    config_file = Path("lossless_config_assr_default.yaml")
 
     # Directory containing the raw files
     import socket
@@ -602,7 +602,7 @@ def main():
     # Loop through each raw file and process it
     for raw_file in raw_files:
         print(f"Processing file: {raw_file}")
-        #entrypoint(str(raw_file), eeg_system, task, config_file)
+        entrypoint(str(raw_file), eeg_system, task, config_file)
 
     # If no raw files are found, print a message
     if not raw_files:
