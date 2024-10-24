@@ -11,4 +11,5 @@ unprocessed/
 *.edf.gz
 *.bdf
 *.bdf.gz
-
+*.png
+*.csv
