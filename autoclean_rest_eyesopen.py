@@ -1,3 +1,20 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = [
+#     "autoreject",
+#     "mne",
+#     "mne-bids",
+#     "numpy",
+#     "pandas",
+#     "pathlib",
+#     "pylossless @ git+https://github.com/drpedapati/pylossless.git",
+#     "rich",
+#     "python-dotenv",
+#     "openneuro-py",
+#     "eeglabio",
+#     "torch"
+# ]
+# ///
 # test_cleaning_pipeline.py
 
 import mne
@@ -383,7 +400,7 @@ def prepare_directories(task):
     
 def main():
     
-    unprocessed_file = "/Users/ernie/Documents/GitHub/EegServer/unprocessed/0354_rest.raw"
+    unprocessed_file = "/bigdrive/data/Proj_SPG601/EegServer/unprocessed/2287_rest.raw"
     eeg_system = "EGI128_RAW"
     task = "rest_eyesopen"
     config_file = Path("lossless_config_rest_eyesopen.yaml")
