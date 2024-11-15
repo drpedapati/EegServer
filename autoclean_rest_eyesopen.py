@@ -7,15 +7,21 @@
 #     "numpy",
 #     "pandas",
 #     "pathlib",
-#     "pylossless @ git+https://github.com/drpedapati/pylossless.git",
 #     "rich",
+#     "pylossless @ /media/bigdrive/data/Proj_SPG601/EegServer/pylossless",
 #     "python-dotenv",
 #     "openneuro-py",
 #     "eeglabio",
-#     "torch"
+#     "torch",
+#     "pybv",
+#     "pyyaml"
 # ]
 # ///
 # test_cleaning_pipeline.py
+
+
+#     "pylossless @ git+https://github.com/drpedapati/pylossless.git",
+#     "pylossless @ /media/bigdrive/data/Proj_SPG601/EegServer/pylossless",
 
 import mne
 import mne_bids as mb
@@ -42,7 +48,7 @@ console = Console()
 dotenv.load_dotenv()
 
 # Add debug mode flag
-DEBUG_MODE = False
+DEBUG_MODE = True
 
 def debug_banner(message):
     if DEBUG_MODE:
@@ -65,7 +71,7 @@ def get_cleaning_rejection_policy():
 
     return rejection_policy
 
-def reject_bad_segs(raw, epoch_duration=2.0, baseline=None, preload=True):
+def reject_bad_segs(raw, epoch_duration=2.0, baseline=None, preload=True): #GW note: is this used later? 
     events = mne.make_fixed_length_events(raw, duration=epoch_duration)
     epochs = mne.Epochs(
         raw, events, tmin=0, tmax=epoch_duration, baseline=baseline, preload=preload
@@ -73,7 +79,7 @@ def reject_bad_segs(raw, epoch_duration=2.0, baseline=None, preload=True):
 
     return epochs
 
-def run_autoreject(epochs, n_jobs=1, verbose=True):
+def run_autoreject(epochs, n_jobs=1, verbose=True):  #GW note: flagged epochs not rejected?  https://github.com/drpedapati/pylossless/blob/main/pylossless/config/rejection.py (line 136)
     ar = autoreject.AutoReject(random_state=11, n_jobs=n_jobs, verbose=verbose)
     ar.fit(epochs)
     epochs_ar, reject_log = ar.transform(epochs, return_log=True)
@@ -94,37 +100,66 @@ def set_eeg_average_reference(raw):
 def resample_data(raw, sfreq=250):
     return raw.resample(sfreq)
 
-def run_pipeline(raw, pipeline, json_file):
+def run_pipeline(raw, pipeline, json_file):   
     pipeline.run_with_raw(raw)
     return pipeline
 
-def pre_pipeline_processing(raw, json_file):
+def pre_pipeline_processing(raw, json_file, debug_dir=None):
     
-    target_sfreq = 250
-    target_crop_duration = 30
-    target_lfreq = 0.1
-    target_hfreq = None
+    apply_resample_toggle                   = True
+    apply_eog_toggle                        = False 
+    apply_average_reference_toggle          = False
+    apply_trim_toggle                       = True
+    apply_crop_toggle                       = True    
+    apply_filter_toggle                     = False  
+
+    # Resample
+    if apply_resample_toggle:
+        target_sfreq        = 250
+        raw                 = resample_data(raw, sfreq=target_sfreq)
+    else:
+        target_sfreq        = None  
     
+    # EOG Assignment
+    if apply_eog_toggle:
+        raw                 = set_eog_channels(raw)
+    else:
+        raw                 = raw
     
-    raw = resample_data(raw, sfreq=target_sfreq)
-
-    # raw.filter(l_freq=target_lfreq, h_freq=target_hfreq)
-
-    raw = set_eog_channels(raw)
+    # Average Reference
+    if apply_average_reference_toggle:
+        raw                 = set_eeg_average_reference(raw)
+    else:
+        raw                 = raw
     
-
-    # Get the start and end times of the data
-    start_time = raw.times[0]
-    end_time = raw.times[-1]
-
-    # Crop the data, trimming 2 seconds from start and end
-    trim = 4
-    raw = raw.crop(tmin=start_time + trim, tmax=end_time - trim)
-
-    raw.crop(tmin=0, tmax=target_crop_duration)
-
-    raw = set_eeg_average_reference(raw)
+    # Trim Edges
+    if apply_trim_toggle:
+        trim                 = 4
+        start_time           = raw.times[0]
+        end_time             = raw.times[-1]
+        raw                  = raw.crop(tmin=start_time + trim, tmax=end_time - trim)   
+    else:
+        trim                 = None
+        start_time           = None
+        end_time             = None
     
+    # Crop Duration
+    if apply_crop_toggle:     
+        target_crop_duration = 60 
+        start_time           = raw.times[0]
+        raw                  = raw.crop(tmin=start_time, tmax=start_time + target_crop_duration)
+    else:
+        target_crop_duration = None
+
+    # Pre-Filter    
+    if apply_filter_toggle:
+        target_lfreq         = .1           #was 0.1, GW changed for testing (ica recommends a lowpass of at least 1hz)
+        target_hfreq         = None         #was None, GW changed for testing
+        raw.filter(l_freq=target_lfreq, h_freq=target_hfreq)
+    else:
+        target_lfreq         = None
+        target_hfreq         = None 
+
     # update json file with new metadata
     with open(json_file, "r") as f:
         json_data = json.load(f)
@@ -135,14 +170,24 @@ def pre_pipeline_processing(raw, json_file):
     json_data["S02_PREPROCESS"]["LowPassHz1"] = target_lfreq
     json_data["S02_PREPROCESS"]["HighPassHz1"] = target_hfreq
     json_data["S02_PREPROCESS"]["CropDurationSec"] = target_crop_duration
+    json_data["S02_PREPROCESS"]["AverageReference"] = apply_average_reference_toggle
+
     with open(json_file, "w") as f:
         json.dump(json_data, f, indent=4)
+    
+    if DEBUG_MODE and debug_dir is not None:
+        debug_banner("Saving preprocessed raw data")
+        export_mne_raw(raw, str(debug_dir / (Path(raw.filenames[0]).stem + "_prepipeline_raw.set")))
 
     return raw
 
-def save_bids(fif_file, autoclean_dir, json_file, task):
+def save_bids(fif_file, bids_dir, json_file, task, debug_dir=None):
+    
+    if fif_file is None:
+        console.print("[red]Error: FIF file not found[/red]")
+        return None
+    
     try:
-        bids_dir = autoclean_dir
         bids_path = convert_single_eeg_to_bids(
             file_path=str(fif_file),
             output_dir=str(bids_dir),
@@ -166,19 +211,28 @@ def save_bids(fif_file, autoclean_dir, json_file, task):
         json_data["S01_IMPORT"]["BIDSBasename"] = bids_path.basename
         with open(json_file, "w") as f:
             json.dump(json_data, f, indent=4)
+            
+        if DEBUG_MODE and debug_dir is not None:
+            raw = mb.read_raw_bids(bids_path, verbose="ERROR", extra_params={"preload": True})
+            debug_banner("Saving BIDS raw data")
+            export_mne_raw(raw, str(debug_dir / (Path(fif_file).stem + "_bids_raw.set")))
 
         return bids_path
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         return None
-
-def convert_unprocessed_to_fif_set(unprocessed_file, metadata_dir, eeg_system, task):
+    
+def convert_unprocessed_to_fif_set(unprocessed_file, metadata_dir, eeg_system, task, debug_dir=None):
+    
+    if not Path(unprocessed_file).exists():
+        console.print("[red]Error: Input file not found[/red]")
+        return None
 
     unprocessed_file = Path(unprocessed_file)
     fif_file = metadata_dir / f"{unprocessed_file.stem}_raw.fif"
     json_file = metadata_dir / f"{unprocessed_file.stem}.json"
-    print(json_file)
+    console.print(f"Processing metadata file: {json_file}")
 
     try:
         if eeg_system == "EGI128_RAW":
@@ -189,15 +243,14 @@ def convert_unprocessed_to_fif_set(unprocessed_file, metadata_dir, eeg_system, t
             raw.set_montage(montage, match_case=False)
             raw.pick_types(eeg=True, exclude=[])
             raw.save(fif_file, overwrite=True)
-            console.print(f"[green]FIF file saved: {fif_file}[/green]")
+            console.print("[green]Successfully converted EGI data to FIF format[/green]")
             
-            # if DEBUG_MODE:
-            #     debug_banner("Exporting raw EEG data to SET format")
-            #     export_mne_raw(raw, str(metadata_dir / (Path(unprocessed_file).stem + "_import.set")))
-
+            if DEBUG_MODE and debug_dir is not None:
+                debug_banner("Exporting raw EEG data to SET format")
+                export_mne_raw(raw, str(debug_dir / (Path(unprocessed_file).stem + "_import.set")))
 
     except Exception as e:
-        console.print(f"[red]Error converting unprocessed file to FIF set: {e}[/red]")
+        console.print(f"[red]Error: Failed to convert EGI data to FIF format - {str(e)}[/red]")
         return None
 
     try:
@@ -217,10 +270,10 @@ def convert_unprocessed_to_fif_set(unprocessed_file, metadata_dir, eeg_system, t
 
         with open(json_file, "w") as f:
             json.dump(json_data, f, indent=4)
-            console.print(f"[green]JSON file saved: {json_file}[/green]")
+            console.print("[green]Successfully created metadata JSON file[/green]")
 
     except Exception as e:
-        console.print(f"[red]Error creating JSON file: {e}[/red]")
+        console.print(f"[red]Error: Failed to create metadata JSON file - {str(e)}[/red]")
         return None
     
     if fif_file.exists():
@@ -230,38 +283,42 @@ def convert_unprocessed_to_fif_set(unprocessed_file, metadata_dir, eeg_system, t
 
 def entrypoint(unprocessed_file, eeg_system, task, config_file):
     
-    autoclean_dir, metadata_dir, clean_dir, debug_dir = prepare_directories(task)
+    autoclean_dir, bids_dir,  metadata_dir, clean_dir, debug_dir = prepare_directories(task)
     
-    if Path(unprocessed_file).exists():
-        fif_file, json_file = convert_unprocessed_to_fif_set(unprocessed_file, metadata_dir, eeg_system, task)
-    else:
-        console.print(f"[red]File not found: {unprocessed_file}[/red]")
+    fif_file, json_file = convert_unprocessed_to_fif_set(unprocessed_file, metadata_dir, eeg_system, task, debug_dir)
     
-    if fif_file is not None:
-        bids_path = save_bids(fif_file, autoclean_dir, json_file, task="rest")
-        raw = mb.read_raw_bids(bids_path, verbose="ERROR", extra_params={"preload": True})
-        if DEBUG_MODE:
-            debug_banner("Saving raw BIDS data")
-            #raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw.fif"), overwrite=True)
-            export_mne_raw(raw, str(debug_dir / (Path(unprocessed_file).stem + "_bids_raw.set")))
+    bids_path           = save_bids(fif_file, bids_dir, json_file, task="rest", debug_dir=debug_dir)
+    
+    raw                 = mb.read_raw_bids(bids_path, verbose="ERROR", extra_params={"preload": True})
+    
+    raw                 = pre_pipeline_processing(raw, json_file, debug_dir)
 
-    if raw is not None:
-        raw = pre_pipeline_processing(raw, json_file)
-        if DEBUG_MODE:
-            debug_banner("Saving preprocessed raw data")
-            #raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw_preproc.fif"), overwrite=True)
-            export_mne_raw(raw, str(debug_dir / (Path(unprocessed_file).stem + "_preprocess_raw.set")))
 
+    
+    # Creates the Pipeline object
+    pipeline = ll.LosslessPipeline(str(config_file))
+
+    pipeline = run_pipeline(raw, pipeline, json_file)
+    pipeline.raw.load_data()
+    
+    # breakpoint()
+    
+    clean_rejection_policy = get_cleaning_rejection_policy()
+    cleaned_raw = clean_rejection_policy.apply(pipeline)
+    export_mne_raw(cleaned_raw, str(debug_dir / (Path(unprocessed_file).stem + "_raw_cleaned_pipeline.set")))
+
+    if DEBUG_MODE:
+        debug_banner("Saving pipeline processed raw data")
+        #pipeline.raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw_pipeline.fif"), overwrite=True)
+        export_mne_raw(pipeline.raw, str(debug_dir / (Path(unprocessed_file).stem + "_raw_pipeline.set")))
+
+    
     if raw is not None:
-        pipeline = ll.LosslessPipeline(str(config_file))
+        
         derivatives_path = pipeline.get_derivative_path(bids_path)
         derivatives_path.suffix = "eeg"
         pipeline = run_pipeline(raw, pipeline, json_file)
-        pipeline.save(derivatives_path, overwrite=True, format="BrainVision")
-        if DEBUG_MODE:
-            debug_banner("Saving pipeline processed raw data")
-            #pipeline.raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw_pipeline.fif"), overwrite=True)
-            export_mne_raw(pipeline.raw, str(debug_dir / (Path(unprocessed_file).stem + "_raw_pipeline.set")))
+        pipeline.save(derivatives_path, overwrite=True, format="EEGLAB") #GW note to self: preprocessed output directory
 
     # Update JSON file with postcomps stage information
     try:
@@ -333,7 +390,7 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
 
     epochs = mne.make_fixed_length_epochs(cleaned_raw, duration=2)
     epochs.load_data()
-    epochs_ar, reject_log = run_autoreject(epochs)
+    epochs_ar, reject_log = run_autoreject(epochs)              #GW note: epoch rejection should be happening here
     epochs_ar.export(clean_dir / (Path(unprocessed_file).stem + "_postcomp_epo.set"), fmt='eeglab', overwrite=True)
     
     ar_plot_file = str(debug_dir / (Path(unprocessed_file).stem + "_autoreject_plot.png"))
@@ -374,15 +431,16 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
     if DEBUG_MODE:
         debug_banner("Saving autoreject epochs")
         #epochs_ar.save(debug_dir / (Path(unprocessed_file).stem + "_postcomp_epo.fif"), overwrite=True)
-        export_mne_epochs(epochs_ar, str(debug_dir / (Path(unprocessed_file).stem + "_postcomp_epo.set")))
+        export_mne_epochs(epochs_ar, str(debug_dir / (Path(unprocessed_file).stem + "_postcomp_epo.set")))  #GW note- is this saving epochs that should be rejected as the postcomp_epo.set?
 
     return
 
 def prepare_directories(task):
-    bids_dir = Path(os.getenv("AUTOCLEAN_DIR")) / task / "bids"
-    metadata_dir =Path(os.getenv("AUTOCLEAN_DIR")) / task / "metadata"
-    clean_dir = Path(os.getenv("AUTOCLEAN_DIR")) / task / "postcomps"
-    debug_dir = Path(os.getenv("AUTOCLEAN_DIR")) / task / "debug"
+    autoclean_dir = Path(os.getenv("AUTOCLEAN_DIR"))
+    bids_dir = autoclean_dir / task / "bids"
+    metadata_dir = autoclean_dir / task / "metadata"
+    clean_dir = autoclean_dir / task / "postcomps"
+    debug_dir = autoclean_dir / task / "debug"
     
     if not bids_dir.exists():
         bids_dir.mkdir(parents=True, exist_ok=True)
@@ -396,14 +454,21 @@ def prepare_directories(task):
     if not debug_dir.exists():
         debug_dir.mkdir(parents=True, exist_ok=True)
         
-    return bids_dir, metadata_dir, clean_dir, debug_dir
+    return autoclean_dir, bids_dir, metadata_dir, clean_dir, debug_dir
     
 def main():
     
-    unprocessed_file = "/bigdrive/data/Proj_SPG601/EegServer/unprocessed/2287_rest.raw"
     eeg_system = "EGI128_RAW"
     task = "rest_eyesopen"
     config_file = Path("lossless_config_rest_eyesopen.yaml")
+    
+    autoclean_dir, bids_dir, metadata_dir, clean_dir, debug_dir = prepare_directories(task)
+
+    # Define Test File
+    test_file = "2287_rest.raw"
+    unprocessed_dir = Path(os.getenv("UNPROCESSED_DIR"))
+    unprocessed_file = unprocessed_dir / test_file
+    console.print(f"[bold yellow]Unprocessed file: {unprocessed_file}[/bold yellow]")
 
     entrypoint(unprocessed_file, eeg_system, task, config_file)
 
