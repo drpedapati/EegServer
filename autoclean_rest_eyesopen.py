@@ -294,18 +294,42 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
     raw                 = pre_pipeline_processing(raw, json_file, debug_dir)
 
 
-    
-    # Creates the Pipeline object
-    pipeline = ll.LosslessPipeline(str(config_file))
 
-    pipeline = run_pipeline(raw, pipeline, json_file)
+    pipeline                    = ll.LosslessPipeline(str(config_file))
+    derivatives_path            = pipeline.get_derivative_path(bids_path)
+    derivatives_path.suffix     = "eeg"
+    pipeline                    = run_pipeline(raw, pipeline, json_file)
+
+    breakpoint() 
+    pipeline.save(derivatives_path, overwrite=True, format="auto")
     pipeline.raw.load_data()
-    
-    # breakpoint()
     
     clean_rejection_policy = get_cleaning_rejection_policy()
     cleaned_raw = clean_rejection_policy.apply(pipeline)
-    export_mne_raw(cleaned_raw, str(debug_dir / (Path(unprocessed_file).stem + "_raw_cleaned_pipeline.set")))
+    
+    pipeline.save(derivatives_path, overwrite=True, format="auto") #GW note to self: preprocessed output directory
+
+    export_mne_raw(pipeline.raw, str(debug_dir / (Path(unprocessed_file).stem + "_raw_cleaned_pipeline.set")))
+    export_mne_raw(cleaned_raw, str(debug_dir / (Path(unprocessed_file).stem + "_postcomp_raw.set")))
+    ica_path = derivatives_path.directory / "sub-400257_task-rest_ica2_ica.fif"
+    ica = mne.preprocessing.read_ica(ica_path)
+
+
+    # Read the IC labels TSV file
+    ic_labels_path = derivatives_path.directory / "sub-400257_task-rest_iclabels.tsv"
+    ic_labels_df = pd.read_csv(ic_labels_path, sep='\t')
+
+    mask = (ic_labels_df['confidence'] > 0.3) & (~ic_labels_df['ic_type'].isin(['brain', 'other']))
+    high_conf_idx = ic_labels_df[mask].index.tolist()
+    console.print(f"Components with confidence > 0.3 and not brain/other: {high_conf_idx}")
+
+    reconst_raw = ica.apply(cleaned_raw, exclude=high_conf_idx)
+    export_mne_raw(reconst_raw, str(debug_dir / (Path(unprocessed_file).stem + "_reconstructed_raw.set")))
+    
+    # Load and apply ICA to raw file
+    raw = mb.read_raw_bids(bids_path, verbose="ERROR", extra_params={"preload": True})
+    
+    
 
     if DEBUG_MODE:
         debug_banner("Saving pipeline processed raw data")
