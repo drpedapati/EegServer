@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.13"
+# requires-python = ">=3.10"
 # dependencies = [
 #     "autoreject",
 #     "mne",
@@ -8,17 +8,17 @@
 #     "pandas",
 #     "pathlib",
 #     "rich",
-#     "pylossless @ /media/bigdrive/data/Proj_SPG601/EegServer/pylossless",
+#     "pylossless @ /Users/ernie/Documents/GitHub/EegServer/pylossless",
 #     "python-dotenv",
 #     "openneuro-py",
 #     "eeglabio",
 #     "torch",
 #     "pybv",
-#     "pyyaml"
+#     "mne-qt-browser",
+#     "pyyaml",
+#     "PySide6"
 # ]
 # ///
-# test_cleaning_pipeline.py
-
 
 #     "pylossless @ git+https://github.com/drpedapati/pylossless.git",
 #     "pylossless @ /media/bigdrive/data/Proj_SPG601/EegServer/pylossless",
@@ -45,7 +45,7 @@ from eeglabio.utils import export_mne_epochs, export_mne_raw
 
 console = Console()
 
-dotenv.load_dotenv()
+dotenv.load_dotenv(override=True)
 
 # Add debug mode flag
 DEBUG_MODE = True
@@ -62,7 +62,7 @@ def get_cleaning_rejection_policy():
     rejection_policy["ic_flags_to_reject"] = [
         "muscle",
         "heart",
-        "eye",
+        "eog",
         "channel noise",
         "line noise",
     ]
@@ -100,9 +100,107 @@ def set_eeg_average_reference(raw):
 def resample_data(raw, sfreq=250):
     return raw.resample(sfreq)
 
-def run_pipeline(raw, pipeline, json_file):   
+def run_pipeline(raw, config_file, bids_path):   
+    
+    pipeline                    = ll.LosslessPipeline(str(config_file))
     pipeline.run_with_raw(raw)
-    return pipeline
+    
+    
+    derivatives_path            = pipeline.get_derivative_path(bids_path)
+    derivatives_path.suffix     = "eeg"
+    pipeline.save(derivatives_path, overwrite=True, format="EEGLAB")
+    
+    clean_rejection_policy = get_cleaning_rejection_policy()
+    cleaned_raw = clean_rejection_policy.apply(pipeline)
+    
+    #breakpoint()
+    cleaned_raw.info['temp'] = {}
+    cleaned_raw.info['temp']['removed_ics'] = pipeline.ica2.exclude
+    removed_ics = cleaned_raw.info['temp']['removed_ics']
+    
+    # Create Artifact Report
+    
+    # Independent Components
+    ic_flags_path = str(derivatives_path.copy().update(
+        suffix='ic_flags',
+        extension='.pdf'
+    ))
+    
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    with PdfPages(ic_flags_path) as pdf:
+        
+        # Get the figures from ICA properties
+        figs = pipeline.ica2.plot_properties(
+            cleaned_raw, 
+            picks=removed_ics,
+            dB=True,
+            plot_std=True,
+            log_scale=False,
+            reject='auto',
+            show=False  # Don't display the plots
+        )
+        
+        figs.append(pipeline.ica2.plot_overlay(pipeline.raw, exclude=removed_ics, show=False))
+        
+        #import matplotlib.pyplot as plt
+        #cleaned_raw.plot(picks=['E8'], remove_dc=False, scalings=150e-6, title="Cleaned Data")
+
+        noisy_channels = pipeline.flags['ch']['noisy']
+        bridged_channels = pipeline.flags['ch']['bridged']
+        rank_deficient_channels = pipeline.flags['ch']['rank']
+        uncorrelated_channels = pipeline.flags['ch']['uncorrelated']
+
+        # Combine all bad channels into a single list
+        bad_channels = []
+        if len(noisy_channels) > 0:
+            bad_channels.extend(noisy_channels)
+            
+        if len(bridged_channels) > 0:  
+            bad_channels.extend(bridged_channels)
+            
+        if len(rank_deficient_channels) > 0:
+            bad_channels.extend(rank_deficient_channels)
+            
+        if len(uncorrelated_channels) > 0:
+            bad_channels.extend(uncorrelated_channels)
+        # Remove any duplicates while preserving order
+        bad_channels = list(dict.fromkeys(bad_channels))
+
+        bad_channels = [str(channel) for channel in bad_channels]
+        
+        # Get data for the noisy channels
+        data, times = cleaned_raw.get_data(picks=bad_channels, return_times=True)
+
+        # Create a matplotlib figure
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Plot each noisy channel
+        for idx, channel in enumerate(bad_channels):
+            ax.plot(times, data[idx] + idx * 300e-6, label=channel)  # Offset each channel for clarity
+
+        # Customize the plot
+        ax.set_title("Noisy Channels")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Amplitude (µV)")
+        ax.legend(loc="upper right")
+        plt.tight_layout()
+
+        # Save the figure
+        #fig.savefig("noisy_channels_plot.png")
+
+        # Optionally, display the figure
+        #plt.show()
+
+        figs.append(fig)
+        
+        # Save each figure to the PDF
+        for fig in figs:
+            pdf.savefig(fig)
+            plt.close(fig)
+    
+    return pipeline, cleaned_raw
 
 def pre_pipeline_processing(raw, json_file, debug_dir=None):
     
@@ -110,7 +208,7 @@ def pre_pipeline_processing(raw, json_file, debug_dir=None):
     apply_eog_toggle                        = False 
     apply_average_reference_toggle          = False
     apply_trim_toggle                       = True
-    apply_crop_toggle                       = True    
+    apply_crop_toggle                       = False    
     apply_filter_toggle                     = False  
 
     # Resample
@@ -293,56 +391,9 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
     
     raw                 = pre_pipeline_processing(raw, json_file, debug_dir)
 
-
-
-    pipeline                    = ll.LosslessPipeline(str(config_file))
-    derivatives_path            = pipeline.get_derivative_path(bids_path)
-    derivatives_path.suffix     = "eeg"
-    pipeline                    = run_pipeline(raw, pipeline, json_file)
-
-    breakpoint() 
-    pipeline.save(derivatives_path, overwrite=True, format="auto")
-    pipeline.raw.load_data()
+    pipeline, postcomps_raw = run_pipeline(raw, config_file, bids_path)
     
-    clean_rejection_policy = get_cleaning_rejection_policy()
-    cleaned_raw = clean_rejection_policy.apply(pipeline)
-    
-    pipeline.save(derivatives_path, overwrite=True, format="auto") #GW note to self: preprocessed output directory
-
-    export_mne_raw(pipeline.raw, str(debug_dir / (Path(unprocessed_file).stem + "_raw_cleaned_pipeline.set")))
-    export_mne_raw(cleaned_raw, str(debug_dir / (Path(unprocessed_file).stem + "_postcomp_raw.set")))
-    ica_path = derivatives_path.directory / "sub-400257_task-rest_ica2_ica.fif"
-    ica = mne.preprocessing.read_ica(ica_path)
-
-
-    # Read the IC labels TSV file
-    ic_labels_path = derivatives_path.directory / "sub-400257_task-rest_iclabels.tsv"
-    ic_labels_df = pd.read_csv(ic_labels_path, sep='\t')
-
-    mask = (ic_labels_df['confidence'] > 0.3) & (~ic_labels_df['ic_type'].isin(['brain', 'other']))
-    high_conf_idx = ic_labels_df[mask].index.tolist()
-    console.print(f"Components with confidence > 0.3 and not brain/other: {high_conf_idx}")
-
-    reconst_raw = ica.apply(cleaned_raw, exclude=high_conf_idx)
-    export_mne_raw(reconst_raw, str(debug_dir / (Path(unprocessed_file).stem + "_reconstructed_raw.set")))
-    
-    # Load and apply ICA to raw file
-    raw = mb.read_raw_bids(bids_path, verbose="ERROR", extra_params={"preload": True})
-    
-    
-
-    if DEBUG_MODE:
-        debug_banner("Saving pipeline processed raw data")
-        #pipeline.raw.save(debug_dir / (Path(unprocessed_file).stem + "_raw_pipeline.fif"), overwrite=True)
-        export_mne_raw(pipeline.raw, str(debug_dir / (Path(unprocessed_file).stem + "_raw_pipeline.set")))
-
-    
-    if raw is not None:
-        
-        derivatives_path = pipeline.get_derivative_path(bids_path)
-        derivatives_path.suffix = "eeg"
-        pipeline = run_pipeline(raw, pipeline, json_file)
-        pipeline.save(derivatives_path, overwrite=True, format="EEGLAB") #GW note to self: preprocessed output directory
+    export_mne_raw(postcomps_raw, str(clean_dir / (Path(unprocessed_file).stem + "_postcomps_raw.set")))
 
     # Update JSON file with postcomps stage information
     try:
@@ -370,6 +421,7 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
                 "noisy_ICs": pipeline.flags['epoch']['noisy_ICs'].tolist() if isinstance(pipeline.flags['epoch']['noisy_ICs'], np.ndarray) else list(pipeline.flags['epoch']['noisy_ICs'])
             },
             "bad_ics": {
+                "rejected_ics": postcomps_raw.info['temp']['removed_ics'],
                 "brain_ICs": pipeline.ica2.labels_['brain'],
                 "muscle_ICs": pipeline.ica2.labels_['muscle'],
                 "heart_ICs": pipeline.ica2.labels_['ecg'],
@@ -403,16 +455,8 @@ def entrypoint(unprocessed_file, eeg_system, task, config_file):
     except Exception as e:
         console.print(f"[red]Error updating JSON file with postcomps information and events: {e}[/red]")
 
-    # Apply rejection policy
-    pipeline.raw.load_data()
-    clean_rejection_policy = get_cleaning_rejection_policy()
-    cleaned_raw = clean_rejection_policy.apply(pipeline)
-    if DEBUG_MODE:
-        debug_banner("Saving cleaned raw data")
-        #cleaned_raw.save(debug_dir / (Path(unprocessed_file).stem + "_postcomp_raw.fif"), overwrite=True)
-        export_mne_raw(cleaned_raw, str(debug_dir / (Path(unprocessed_file).stem + "_postcomp_raw.set")))
 
-    epochs = mne.make_fixed_length_epochs(cleaned_raw, duration=2)
+    epochs = mne.make_fixed_length_epochs(postcomps_raw, duration=2)
     epochs.load_data()
     epochs_ar, reject_log = run_autoreject(epochs)              #GW note: epoch rejection should be happening here
     epochs_ar.export(clean_dir / (Path(unprocessed_file).stem + "_postcomp_epo.set"), fmt='eeglab', overwrite=True)
